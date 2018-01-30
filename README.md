@@ -25,7 +25,7 @@ sudo python setup.py install
 gp = gamepad.gamepad()
 # find out which axes and buttons are which:
 while 1:
-    gp.listen()
+    print gp.listen()
 ```
 
 ## Authors
