@@ -12,7 +12,7 @@ class gamepad():
     device_name = ""
     devices_available = []
     timeout = .1
-    stop_on_button = False
+    button_priority = False
     do_listen = False
 
     axes_available = []
@@ -91,8 +91,8 @@ class gamepad():
     }
     
     
-    def __init__(self, device=None, timeout=.1, stop_on_button=False):
-        """Instantiates a gamepad instance to interact with gamepads
+    def __init__(self, device=None, timeout=.1, button_priority=True):
+        """Instantiates a gamepad instance to read data from gamepads
             
             Use the listen function to get data
             
@@ -102,11 +102,13 @@ class gamepad():
                 Which device to use. [default = 'js0']
             timeout : float
                 How much time to wait for data when there is no activity, in s [default = .1]
-            stop_on_button : bool
+            button_priority : bool
                 To improve performance, the listen function waits until the buffer is empty and 
-                returns the most recent data. If a button press is during axis change, it may not   
-                register because the buffer won't be empty. Set stop_on_button to True to break   
-                out of the listen look on any button press to address this. [default = False]
+                returns only the most recent data. This helps with small incremental axis 
+                changes that can quickly fill the buffer. But if a button press occurs during 
+                axis changes, it may not register because the buffer won't be empty. Set 
+                button_priority to True to address this, and the listen loop will be exited on 
+                any button press. [default = True]
 
         """
 
@@ -134,16 +136,13 @@ class gamepad():
             else:
                 raise Exception("No gamepad devices found")
 
-        self.stop_on_button = stop_on_button
+        self.button_priority = button_priority
 
         self.device_handle = open(os.path.join(self.device_path, self.device_file), 'rb')
         
-        # Get the device name.
-        #buf = bytearray(63)
         buf = array.array('c', ['\0'] * 64)
         ioctl(self.device_handle, 0x80006a13 + (0x10000 * len(buf)), buf) # JSIOCGNAME(len)
         self.device_name = buf.tostring().strip("\x00")
-#        print('Device name: %s' % js_name)
         
         # Get number of axes and buttons.
         buf = array.array('B', [0])
@@ -187,6 +186,8 @@ class gamepad():
 
 
     def flush(self):
+        """Flush the buffer of old data
+        """
         buffer_full = True
         while buffer_full:
             d,v = self.listen()
@@ -195,18 +196,28 @@ class gamepad():
 
 
     def listen(self):
-        """Listen for gamepad input
+        """Listen for gamepad input, waiting at most timeout s.
 
-        Waits at most timeout s.
+            To improve performance, buffer data will be emptied and only the most 
+            recent data will be returned. In most cases, this is fine since what is
+            thrown out are incremental axis changes. 
+
+            The main possible issue with this approach is button presses, which may 
+            get lost in the tidal wave of axis data. Set button_priority == True to
+            deal with this, and any time there is a button activity, it is returned 
+            regardless of buffer status. 
 
         Returns
         -------
         ret : tuple
             A tuple, in which the first element is the device name (axis or button; listed 
             in axes_available and buttons_available), and the second is the state (for axes, 
-            a float -1 < 1; for buttons 1 for down, 0 for up)
+            a float -1 < 1; for buttons 1 for down, 0 for up). When no data is detected and
+            the timeout interval is reached, a tuple of None's is returned: (None,None).
 
-            To determine which axes and buttons are which for a gamepad, try something like:
+        Example
+        -------
+            To determine the names of the axes and buttons of a gamepad, try something like:
 
             while 1:
                 print gamepad.listen()
@@ -230,11 +241,7 @@ class gamepad():
                         if button:
                             if evvalue:
                                 ret = button,0
-                                if self.stop_on_button:
-                                    # Button presses may be more important than axis changes
-                                    # And if a button press is during movement, it may not register
-                                    # Because the buffer isn't empty. Set stop_on_button to True 
-                                    # to address this.
+                                if self.button_priority:
                                     self.do_listen = False
                             else:
                                 ret = button,1
